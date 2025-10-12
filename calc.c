@@ -1,12 +1,9 @@
-// Chamod Chirantha 000000
-// (Replace with your real Name Lastname StudentID)
-// Compile with: gcc -O2 -Wall -Wextra -std=c17 -o calc calc.c
 
 static const char *STUDENT_FIRST   = "Chamod";   // your first name
 static const char *STUDENT_LAST    = "Chirantha";   // your last name
-static const char *STUDENT_ID      = "000000";   // your student ID
-static const char *SYSTEM_USERNAME = "CHAMOD CHIRANTHA";   // your OS username (for default folder name)
-------------------------
+static const char *STUDENT_ID      = "233AEB022";   // your student ID
+static const char *SYSTEM_USERNAME = "CHAMOD DILSHAN";   // your OS username (for default folder name)
+
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,6 +13,9 @@ static const char *SYSTEM_USERNAME = "CHAMOD CHIRANTHA";   // your OS username (
 #include <math.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#include <direct.h>  // for _mkdir on Windows
+#endif
 #include <sys/types.h>
 
 #ifndef _WIN32
