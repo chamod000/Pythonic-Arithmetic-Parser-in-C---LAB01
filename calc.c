@@ -1,9 +1,6 @@
-
-static const char *STUDENT_FIRST   = "Chamod";   // your first name
-static const char *STUDENT_LAST    = "Chirantha";   // your last name
-static const char *STUDENT_ID      = "233AEB022";   // your student ID
-static const char *SYSTEM_USERNAME = "CHAMOD DILSHAN";   // your OS username (for default folder name)
-
+// Name Lastname StudentID
+// GitHub repository: (optional link)
+// Compile with: gcc -O2 -Wall -Wextra -std=c17 -o calc calc.c
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,7 +11,7 @@ static const char *SYSTEM_USERNAME = "CHAMOD DILSHAN";   // your OS username (fo
 #include <dirent.h>
 #include <sys/stat.h>
 #ifdef _WIN32
-#include <direct.h>  // for _mkdir on Windows
+#include <direct.h>
 #endif
 #include <sys/types.h>
 
@@ -24,11 +21,13 @@ static const char *SYSTEM_USERNAME = "CHAMOD DILSHAN";   // your OS username (fo
 
 // ---------- Small utilities ----------
 
+// Check if string ends with suffix
 static int ends_with(const char *s, const char *suffix) {
     size_t ls = strlen(s), lt = strlen(suffix);
     return ls >= lt && strcmp(s + (ls - lt), suffix) == 0;
 }
 
+// Get base name of a path
 static const char *path_basename(const char *path) {
     const char *p = strrchr(path, '/');
 #ifdef _WIN32
@@ -38,13 +37,34 @@ static const char *path_basename(const char *path) {
     return p ? p + 1 : path;
 }
 
+// Get directory prefix (including trailing slash/backslash if present). Caller must free.
+static char *path_dirprefix(const char *path) {
+    const char *p = strrchr(path, '/');
+#ifdef _WIN32
+    const char *q = strrchr(path, '\\');
+    if (!p || (q && q > p)) p = q;
+#endif
+    if (!p) {
+        char *empty = (char *)malloc(1);
+        if (empty) empty[0] = '\0';
+        return empty; // no directory part
+    }
+    size_t dirlen = (size_t)(p - path + 1); // include the separator
+    char *dir = (char *)malloc(dirlen + 1);
+    if (!dir) return NULL;
+    memcpy(dir, path, dirlen);
+    dir[dirlen] = '\0';
+    return dir;
+}
+
+// Strip the extension from a string (in place)
 static void strip_extension(char *s) {
     char *dot = strrchr(s, '.');
     if (dot) *dot = '\0';
 }
 
+// Create a directory if it does not exist
 static int mkpath(const char *path) {
-    // POSIX mkdir returns -1 if exists; treat as success if EEXIST
 #ifdef _WIN32
     int rc = _mkdir(path);
 #else
@@ -55,6 +75,7 @@ static int mkpath(const char *path) {
     return -1;
 }
 
+// Join three strings
 static char *join3(const char *a, const char *b, const char *c) {
     size_t la = strlen(a), lb = strlen(b), lc = strlen(c);
     char *out = (char *)malloc(la + lb + lc + 1);
@@ -66,16 +87,7 @@ static char *join3(const char *a, const char *b, const char *c) {
     return out;
 }
 
-static char *join_path3(const char *a, const char *b, const char *c) {
-    // returns a + '/' + b + '/' + c (allocates)
-    const char *sep = "/";
-    size_t la = strlen(a), lb = strlen(b), lc = strlen(c);
-    char *out = (char *)malloc(la + 1 + lb + 1 + lc + 1);
-    if (!out) return NULL;
-    sprintf(out, "%s/%s/%s", a, b, c);
-    return out;
-}
-
+// Read all file content into a buffer
 static char *read_all(const char *path, size_t *out_len) {
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
@@ -101,13 +113,14 @@ typedef enum {
 typedef struct {
     TokenType type;
     double    num;   // valid if type==T_NUM
-    size_t    pos;   // 1-based char index in whole file (start of token)
+    size_t    pos;   // 1-based char index in the input file
 } Token;
 
 typedef struct {
     Token *data; int count; int cap;
 } TokenVec;
 
+// Push a token to the token vector
 static int tv_push(TokenVec *tv, Token t) {
     if (tv->count == tv->cap) {
         int ncap = tv->cap ? tv->cap * 2 : 64;
@@ -118,121 +131,99 @@ static int tv_push(TokenVec *tv, Token t) {
     tv->data[tv->count++] = t; return 0;
 }
 
-typedef struct {
-    size_t error_pos; // 0 if no error
-} ScanError;
-
-static void scan_tokens(const char *src, size_t len, TokenVec *out, ScanError *err) {
-    size_t i = 0; size_t pos = 1; int at_line_start = 1;
-    err->error_pos = 0;
-
+// Tokenize the input source
+static void scan_tokens(const char *src, size_t len, TokenVec *out) {
+    size_t i = 0; size_t pos = 1;
     while (i < len) {
-        // Handle line-start "#" comments (first non-space '#')
-        if (at_line_start) {
-            size_t j = i; size_t p2 = pos;
-            while (j < len && (src[j] == ' ' || src[j] == '\t' || src[j] == '\r')) { j++; p2++; }
-            if (j < len && src[j] == '#') {
-                // skip to end of line (but keep counting positions)
-                while (j < len && src[j] != '\n') { j++; p2++; }
-                i = j; pos = p2; // newline (if any) handled below
-            } else {
-                at_line_start = 0;
-            }
-        }
-
-        if (i >= len) break;
         char c = src[i];
 
-        if (c == ' ' || c == '\t' || c == '\r') { i++; pos++; continue; }
-        if (c == '\n') { i++; pos++; at_line_start = 1; continue; }
+        // Skip whitespace
+        if (isspace((unsigned char)c)) { i++; pos++; continue; }
 
-        // Number: digit or '.' followed by digit -> use strtod
-        if (isdigit((unsigned char)c) || c == '.') {
-            char *endp = NULL;
-            errno = 0;
-            double v = strtod(&((char*)src)[i], &endp);
-            size_t consumed = (size_t)(endp - &src[i]);
-            if (consumed == 0) {
-                // e.g., lone '.' not a number
-                if (!err->error_pos) err->error_pos = pos;
-                return;
-            }
-            size_t start_pos = pos;
-            i += consumed; pos += consumed;
-            Token t = { T_NUM, v, start_pos };
-            if (tv_push(out, t) != 0) { if (!err->error_pos) err->error_pos = start_pos; return; }
+        // Handle comments (to end of line)
+        if (c == '#') {
+            while (i < len && src[i] != '\n') { i++; pos++; }
             continue;
         }
 
-        // Operators and parentheses
-        if (c == '+') { Token t = { T_PLUS, 0, pos }; tv_push(out, t); i++; pos++; continue; }
-        if (c == '-') { Token t = { T_MINUS,0, pos }; tv_push(out, t); i++; pos++; continue; }
-        if (c == '*') {
-            size_t start_pos = pos;
-            if (i + 1 < len && src[i+1] == '*') {
-                Token t = { T_POW, 0, start_pos }; tv_push(out, t); i += 2; pos += 2; continue;
-            } else {
-                Token t = { T_STAR,0, start_pos }; tv_push(out, t); i++; pos++; continue;
-            }
+        // Handle numbers
+        if (isdigit((unsigned char)c) || c == '.') {
+            char *endp = NULL;
+            double v = strtod(&src[i], &endp);
+            size_t consumed = (size_t)(endp - &src[i]);
+            Token t = (Token){ T_NUM, v, pos };
+            tv_push(out, t);
+            i += consumed; pos += consumed;
+            continue;
         }
-        if (c == '/') { Token t = { T_SLASH,0, pos }; tv_push(out, t); i++; pos++; continue; }
-        if (c == '(') { Token t = { T_LPAREN,0, pos }; tv_push(out, t); i++; pos++; continue; }
-        if (c == ')') { Token t = { T_RPAREN,0, pos }; tv_push(out, t); i++; pos++; continue; }
+
+        // Handle exponentiation (**) before single '*'
+        if (c == '*' && (i + 1) < len && src[i + 1] == '*') {
+            Token t = (Token){ T_POW, 0.0, pos };
+            tv_push(out, t);
+            i += 2; pos += 2;
+            continue;
+        }
+
+        // Handle single-character operators and parens
+        if (c == '+') { Token t = { T_PLUS, 0, pos }; tv_push(out, t); i++; pos++; continue; }
+        if (c == '-') { Token t = { T_MINUS, 0, pos }; tv_push(out, t); i++; pos++; continue; }
+        if (c == '*') { Token t = { T_STAR, 0, pos }; tv_push(out, t); i++; pos++; continue; }
+        if (c == '/') { Token t = { T_SLASH, 0, pos }; tv_push(out, t); i++; pos++; continue; }
+        if (c == '(') { Token t = { T_LPAREN, 0, pos }; tv_push(out, t); i++; pos++; continue; }
+        if (c == ')') { Token t = { T_RPAREN, 0, pos }; tv_push(out, t); i++; pos++; continue; }
 
         // Invalid character
-        if (!err->error_pos) err->error_pos = pos;
-        return;
+        fprintf(stderr, "ERROR: Invalid character at position %zu\n", pos);
+        exit(1);
     }
 
-    Token endt = { T_END, 0, pos }; tv_push(out, endt);
+    Token endt = { T_END, 0, pos };
+    tv_push(out, endt);
 }
 
-// ---------- Parser / Evaluator (recursive descent) ----------
+// ---------- Parser ----------
 
 typedef struct {
     Token *toks; int idx; int n;
-    size_t error_pos; // first error position (1-based); 0 if none
+    size_t error_pos; // first error position (1-based)
 } Parser;
 
+// Helper functions for parsing
 static Token *peek(Parser *p) { return &p->toks[p->idx]; }
 static Token *advance(Parser *p) { if (p->idx < p->n-1) p->idx++; return &p->toks[p->idx-1]; }
-static int match(Parser *p, TokenType tt, size_t *op_pos_out) {
-    if (peek(p)->type == tt) { if (op_pos_out) *op_pos_out = peek(p)->pos; advance(p); return 1; } return 0;
+static int match(Parser *p, TokenType tt) {
+    if (peek(p)->type == tt) { advance(p); return 1; } return 0;
 }
-static void fail(Parser *p, size_t pos) { if (p->error_pos == 0) p->error_pos = pos; }
 
-static double parse_expr(Parser *p); // fwd
+// Forward decls
+static double parse_expr(Parser *p);
 static double parse_term(Parser *p);
 static double parse_power(Parser *p);
-static double parse_unary(Parser *p);
 static double parse_primary(Parser *p);
 
+// Expression parsing: Addition/Subtraction
 static double parse_expr(Parser *p) {
     double v = parse_term(p);
     while (p->error_pos == 0) {
-        size_t op_pos = 0;
-        if (match(p, T_PLUS, &op_pos)) {
-            double rhs = parse_term(p); if (p->error_pos) return 0; v += rhs; continue;
-        }
-        if (match(p, T_MINUS, &op_pos)) {
-            double rhs = parse_term(p); if (p->error_pos) return 0; v -= rhs; continue;
-        }
+        if (match(p, T_PLUS)) { v += parse_term(p); continue; }
+        if (match(p, T_MINUS)) { v -= parse_term(p); continue; }
         break;
     }
     return v;
 }
 
+// Term parsing: Multiplication/Division
 static double parse_term(Parser *p) {
     double v = parse_power(p);
     while (p->error_pos == 0) {
-        size_t op_pos = 0;
-        if (match(p, T_STAR, &op_pos)) {
-            double rhs = parse_power(p); if (p->error_pos) return 0; v *= rhs; continue;
-        }
-        if (match(p, T_SLASH, &op_pos)) {
-            double rhs = parse_power(p); if (p->error_pos) return 0;
-            // Division-by-zero detection: report at the '/' operator position (documented choice)
-            if (fabs(rhs) < 1e-15) { fail(p, op_pos); return 0; }
+        if (match(p, T_STAR)) { v *= parse_power(p); continue; }
+        if (match(p, T_SLASH)) {
+            double rhs = parse_power(p);
+            if (rhs == 0) {
+                fprintf(stderr, "ERROR: Division by zero at position %zu\n", peek(p)->pos);
+                exit(1);
+            }
             v /= rhs; continue;
         }
         break;
@@ -240,222 +231,108 @@ static double parse_term(Parser *p) {
     return v;
 }
 
+// Power parsing: right-associative exponentiation (a ** b ** c => a ** (b ** c))
 static double parse_power(Parser *p) {
-    // Right-associative: power := unary ('**' power)?
-    double base = parse_unary(p);
-    if (p->error_pos) return 0;
-    size_t op_pos = 0;
-    if (match(p, T_POW, &op_pos)) {
-        double expv = parse_power(p);
-        if (p->error_pos) return 0;
-        // pow behavior mirrors C/Python; domain errors (e.g., negative base with fractional exponent) yield NaN; allowed per assignment.
-        base = pow(base, expv);
+    // To make it right-associative, parse a primary, and if '**' follows,
+    // evaluate primary ** parse_power() rather than primary ** parse_primary()
+    double base = parse_primary(p);
+    if (match(p, T_POW)) {
+        double exponent = parse_power(p);
+        base = pow(base, exponent);
     }
     return base;
 }
 
-static double parse_unary(Parser *p) {
-    size_t op_pos = 0;
-    if (match(p, T_PLUS, &op_pos)) {
-        return parse_unary(p);
-    }
-    if (match(p, T_MINUS, &op_pos)) {
-        return -parse_unary(p);
-    }
-    return parse_primary(p);
-}
-
+// Primary parsing: Handles numbers and parentheses
 static double parse_primary(Parser *p) {
     Token *t = peek(p);
     if (t->type == T_NUM) { advance(p); return t->num; }
     if (t->type == T_LPAREN) {
         advance(p);
         double v = parse_expr(p);
-        if (p->error_pos) return 0;
         if (peek(p)->type != T_RPAREN) {
-            // unmatched '(' -> error at current token (where ')' expected); if EOF, this will be EOF position
-            fail(p, peek(p)->pos);
-            return 0;
+            fprintf(stderr, "ERROR: Expected ')' at position %zu\n", peek(p)->pos);
+            exit(1);
         }
-        advance(p); // consume ')'
+        advance(p);
         return v;
     }
-    // Expected a number or '('; report error at this token start
-    fail(p, t->pos);
-    return 0;
+    fprintf(stderr, "ERROR: Expected number or '(' at position %zu\n", peek(p)->pos);
+    exit(1);
 }
 
-// ---------- Evaluation entry point ----------
-
-typedef struct {
-    int ok;            // 1 if success, 0 if error
-    double value;      // valid if ok
-    size_t error_pos;  // valid if !ok
-} EvalResult;
-
-static EvalResult evaluate_text(const char *src, size_t len) {
-    TokenVec tv = {0};
-    ScanError se = {0};
-    scan_tokens(src, len, &tv, &se);
-    if (se.error_pos) {
-        EvalResult er = {0, 0.0, se.error_pos};
-        free(tv.data);
-        return er;
-    }
-
-    Parser p = { tv.data, 0, tv.count, 0 };
-    double val = parse_expr(&p);
-
-    if (p.error_pos == 0) {
-        // After parsing, ensure we've consumed everything (next must be T_END)
-        if (peek(&p)->type != T_END) {
-            // Unexpected trailing token -> error at its position
-            p.error_pos = peek(&p)->pos;
-        }
-    }
-
-    EvalResult er;
-    if (p.error_pos) {
-        er.ok = 0; er.value = 0.0; er.error_pos = p.error_pos;
-    } else {
-        er.ok = 1; er.value = val; er.error_pos = 0;
-    }
-    free(tv.data);
-    return er;
-}
-
-// ---------- Output helpers ----------
-
-static void print_value(FILE *f, double v) {
-    // If integral (within 1e-12), print as integer; else with %.15g
-    double r = nearbyint(v);
-    if (fabs(v - r) < 1e-12) {
-        long long ll = llround(v);
-        fprintf(f, "%lld\n", ll);
-    } else {
-        fprintf(f, "%.15g\n", v);
-    }
-}
-
-static int write_result_file(const char *outdir, const char *input_base_noext,
-                             const char *first, const char *last, const char *student_id,
-                             const EvalResult *er) {
-    // Build filename: <base>_<name>_<lastname>_<studentid>.txt
-    char namebuf[512];
-    snprintf(namebuf, sizeof(namebuf), "%s_%s_%s_%s.txt", input_base_noext, first, last, student_id);
-
-    char *outpath = join_path3(outdir, "", namebuf); // will create double '/', acceptable
-    if (!outpath) return -1;
-
-    // Normalize path (remove the duplicate '/') by rebuilding
-    char fixed[1024];
-    snprintf(fixed, sizeof(fixed), "%s/%s", outdir, namebuf);
-
-    FILE *f = fopen(fixed, "wb");
-    if (!f) { free(outpath); return -1; }
-    if (er->ok) {
-        print_value(f, er->value);
-    } else {
-        fprintf(f, "ERROR:%zu\n", er->error_pos);
-    }
-    fclose(f);
-    free(outpath);
-    return 0;
-}
-
-// ---------- CLI & batch processing ----------
-
-static char *derive_default_outdir_from_path(const char *path_base_component) {
-    // <base>_<username>_<studentid>
-    char buf[512];
-    snprintf(buf, sizeof(buf), "%s_%s_%s", path_base_component, SYSTEM_USERNAME, STUDENT_ID);
-    return strdup(buf);
-}
-
-static int process_one_file(const char *inpath, const char *outdir) {
-    size_t len = 0; char *text = read_all(inpath, &len);
-    if (!text) { fprintf(stderr, "Failed to read %s\n", inpath); return -1; }
-    EvalResult er = evaluate_text(text, len);
-
-    // Determine base name without extension
-    char basebuf[512];
-    snprintf(basebuf, sizeof(basebuf), "%s", path_basename(inpath));
-    strip_extension(basebuf);
-
-    int rc = write_result_file(outdir, basebuf, STUDENT_FIRST, STUDENT_LAST, STUDENT_ID, &er);
-    if (rc != 0) fprintf(stderr, "Failed to write result for %s\n", inpath);
-
-    free(text);
-    return rc;
-}
-
-static void usage(const char *argv0) {
-    fprintf(stderr, "Usage: %s [-d DIR|--dir DIR] [-o OUTDIR|--output-dir OUTDIR] [input.txt]\n", argv0);
-}
-
+// ---------- Main Function ----------
 int main(int argc, char **argv) {
-    const char *dir_opt = NULL;
-    const char *outdir_opt = NULL;
-    const char *file_arg = NULL;
-
-    // Minimal flag parser
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--dir") == 0) {
-            if (i + 1 >= argc) { usage(argv[0]); return 1; }
-            dir_opt = argv[++i];
-        } else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output-dir") == 0) {
-            if (i + 1 >= argc) { usage(argv[0]); return 1; }
-            outdir_opt = argv[++i];
-        } else if (argv[i][0] == '-') {
-            usage(argv[0]); return 1;
-        } else {
-            file_arg = argv[i];
-        }
+    // Parsing command line arguments
+    if (argc < 2) {
+        printf("Usage: %s <input-file>\n", argv[0]);
+        return 1;
     }
-
-    // Decide mode
-    int dir_mode = (dir_opt != NULL);
-    if (!dir_mode && !file_arg) { usage(argv[0]); return 1; }
-
-    // Determine default outdir if not provided
-    char *outdir = NULL; int free_outdir = 0;
-    if (!outdir_opt) {
-        if (dir_mode) {
-            // default outdir from directory base name
-            char basebuf[512]; snprintf(basebuf, sizeof(basebuf), "%s", path_basename(dir_opt));
-            outdir = derive_default_outdir_from_path(basebuf); free_outdir = 1;
-        } else {
-            char basebuf[512]; snprintf(basebuf, sizeof(basebuf), "%s", path_basename(file_arg));
-            strip_extension(basebuf);
-            outdir = derive_default_outdir_from_path(basebuf); free_outdir = 1;
-        }
-    } else {
-        outdir = (char *)outdir_opt; free_outdir = 0;
-    }
-
-    if (mkpath(outdir) != 0) {
-        fprintf(stderr, "Could not create or access output dir: %s\n", outdir);
-        if (free_outdir) free(outdir);
+    const char *input_file = argv[1];
+    size_t len = 0;
+    char *src = read_all(input_file, &len);
+    if (!src) {
+        fprintf(stderr, "ERROR: Could not read input file: %s\n", input_file);
         return 1;
     }
 
-    int rc = 0;
-    if (dir_mode) {
-        DIR *d = opendir(dir_opt);
-        if (!d) { fprintf(stderr, "Cannot open directory: %s\n", dir_opt); if (free_outdir) free(outdir); return 1; }
-        struct dirent *ent;
-        while ((ent = readdir(d)) != NULL) {
-            if (ent->d_type == DT_DIR) continue; // ignore subfolders
-            if (!ends_with(ent->d_name, ".txt")) continue;
-            // Build full path
-            char full[1024]; snprintf(full, sizeof(full), "%s/%s", dir_opt, ent->d_name);
-            if (process_one_file(full, outdir) != 0) rc = 1; // keep going even if one fails
-        }
-        closedir(d);
-    } else {
-        if (process_one_file(file_arg, outdir) != 0) rc = 1;
+    TokenVec tokens = {0};
+    scan_tokens(src, len, &tokens);
+
+    Parser parser = { tokens.data, 0, tokens.count, 0 };
+    double result = parse_expr(&parser);
+
+    // --- Write to output file with "<base>output.txt" in same directory ---
+    char *dirprefix = path_dirprefix(input_file);
+    const char *base = path_basename(input_file);
+
+    char *base_copy = (char *)malloc(strlen(base) + 1);
+    if (!base_copy || !dirprefix) {
+        fprintf(stderr, "ERROR: Memory allocation failed\n");
+        free(tokens.data);
+        free(src);
+        free(dirprefix);
+        free(base_copy);
+        return 1;
+    }
+    strcpy(base_copy, base);
+    strip_extension(base_copy);  // "file1.txt" -> "file1"
+
+    char *outfile = join3(dirprefix, base_copy, "output.txt");
+    if (!outfile) {
+        fprintf(stderr, "ERROR: Memory allocation failed\n");
+        free(tokens.data);
+        free(src);
+        free(dirprefix);
+        free(base_copy);
+        return 1;
     }
 
-    if (free_outdir) free(outdir);
-    return rc;
+    FILE *of = fopen(outfile, "w");
+    if (!of) {
+        fprintf(stderr, "ERROR: Could not open output file for writing: %s\n", outfile);
+        free(tokens.data);
+        free(src);
+        free(dirprefix);
+        free(base_copy);
+        free(outfile);
+        return 1;
+    }
+
+    // Write the result (same text as stdout, consistent with previous behavior)
+    fprintf(of, "Result: %.15g\n", result);
+    fclose(of);
+
+    // Also print to console (optional for user feedback)
+    printf("Result: %.15g\n", result);
+    printf("Wrote output to: %s\n", outfile);
+
+    // cleanup
+    free(tokens.data);
+    free(src);
+    free(dirprefix);
+    free(base_copy);
+    free(outfile);
+
+    return 0;
 }
