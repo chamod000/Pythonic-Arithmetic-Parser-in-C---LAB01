@@ -1,14 +1,14 @@
-// Name Lastname StudentID
+// Kodithuwakku Arachchige Chamod Chirantha Dilshan
 // GitHub repository: (optional link)
 // Compile with: gcc -O2 -Wall -Wextra -std=c17 -o calc calc.c
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <ctype.h>
-#include <errno.h>
-#include <math.h>
-#include <dirent.h>
+#include <stdio.h> // printf, fprintf, FILE, fopen, fread, fclose
+#include <stdlib.h> // malloc, realloc, free, exit, strtod
+#include <string.h> // strlen, strcmp, memcpy, strcpy, strrchr, strerror
+#include <ctype.h> // isspace, isdigit
+#include <errno.h> // errno values for IO errors
+#include <math.h> // pow()
+#include <dirent.h> // (unused in this code, safe but optional)
 #include <sys/stat.h>
 #ifdef _WIN32
 #include <direct.h>
