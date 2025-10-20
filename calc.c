@@ -1,5 +1,5 @@
 // Kodithuwakku Arachchige Chamod Chirantha Dilshan
-// GitHub repository: (optional link)
+// GitHub repository: https://github.com/chamod000/Pythonic-Arithmetic-Parser-in-C---LAB01.git
 // Compile with: gcc -O2 -Wall -Wextra -std=c17 -o calc calc.c
 
 #include <stdio.h> // printf, fprintf, FILE, fopen, fread, fclose
